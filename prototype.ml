@@ -69,7 +69,7 @@ let string_of_v (v:value) : string =
   match v with
   | Const i -> "const_" ^ string_of_int i
   | Variable s -> "var_" ^ s
-  | Unit -> "unit"
+  | Unit -> "()"
 ;;
 
 
@@ -79,7 +79,7 @@ let rec string_of_spec (li:spec): string =
       match f with
       | Normal v -> "Normal(" ^ string_of_v v ^ ")"
       | Eff (eff_n, eff_v, ss) ->
-        "(" ^ eff_n ^ "," ^ string_of_v eff_v ^ "):\n  "
+        "Eff(" ^ eff_n ^ "," ^ string_of_v eff_v ^ "):\n  "
         ^ string_of_spec ss
     in
     let (pi, f) = s in
@@ -103,20 +103,64 @@ let rec retrive_handler (li: eff_handler list) (eff_name: string) : eff_handler 
   else retrive_handler xs eff_name
 ;;
 
+
+let rec string_of_expr (expr:expr): string = 
+  
+  let string_of_handler (handler:handler) : string = 
+    let rec helper handLi : string =
+      match handLi with 
+      | [] -> ""
+      | (eff_name, eff_var, eff_e)::xs -> "| effect (" ^ eff_name 
+        ^ " " ^ eff_var ^ ") k -> " ^ string_of_expr eff_e ^"\n" ^ helper xs 
+    in 
+    let (base_v, base_e, li) = handler in 
+    "| " ^ base_v ^ " -> " ^ string_of_expr base_e ^ "\n" ^  helper li
+  in
+
+  match expr with 
+  | Resume v -> "continue k "^ string_of_v v
+  | Match (e1, handler) -> "match " ^ string_of_expr e1 ^ " with \n" ^ string_of_handler handler
+  | Perform (eff, v) -> "perform (" ^ eff ^ " "^ string_of_v v ^")"
+  | Value v -> string_of_v v 
+  | _ -> raise (Foo "later")
+;;
+
+let normalPure (pi:pure) : pure = 
+match pi with 
+| PureAnd (TRUE, TRUE) -> TRUE
+| _ -> pi
+;;
+
+
+
 let formLetSeq (e:expr) (e1:expr) : expr =
   Let ("null", e, e1)
 
 let skip_cont: spec = [(TRUE, Normal Unit)]
 
-let rec forward_shell (preState:spec) (expr:expr) : spec =
-  let rec forward (curState:single_spec) (expr:expr) : spec =
+let rec forward_shell (preState:spec) (exprOut:expr) : spec =
+  let rec forward (curState:single_spec) (exprIn:expr) : spec =
+    (*
+    print_string ("=================\n");
+    print_string (string_of_spec [curState]^"\n");
+    print_string (string_of_expr exprIn ^ "\n");
+    *)
+
     let (pi, flow) = curState in
+    let pi = normalPure pi in 
+
     match flow with
     | Eff (eff_name, eff_v, eff_cons) -> 
-      let expr_spec = forward_shell eff_cons expr in 
-      [(pi, Eff(eff_name, eff_v, expr_spec))]
+      (match exprIn with 
+      | Resume v ->
+        List.map (fun (expr_pi, expr_f) -> (normalPure(PureAnd (pi, expr_pi)), expr_f)) eff_cons
+        
+      | _ ->
+        let expr_spec = forward_shell eff_cons exprIn in 
+        [(pi, Eff(eff_name, eff_v, expr_spec))]
+      )
     | Normal (v_old) -> 
-      (match expr with 
+      (match exprIn with 
       | Value v ->  [(pi, Normal (v))]
       | Perform (eff, v) -> [(pi, Eff(eff, v, skip_cont))]
       | Let (x, e1, e2) ->
@@ -138,51 +182,33 @@ let rec forward_shell (preState:spec) (expr:expr) : spec =
           | Eff(eff_name, v, cons) ->
             (match retrive_handler eff_han eff_name with
             | None -> [final]
-            | Some (_, var_s, e_h)-> forward final (Match (e_h, handler))
+            | Some (_, var_s, e_h)-> 
+              forward (final) (e_h)
             )
         ) eff1 in
         List.flatten aff_final
+
+      | Resume v -> 
+        raise (Foo "resuming but has no continusation")
       | _ -> raise (Foo "Not yet!") (*| FunCall of (string * string list)*)
       )
     
-  in List.flatten (List.map (fun cur -> forward cur expr) preState)
+  in List.flatten (List.map (fun cur -> forward cur exprOut) preState)
 
 
 let startState = (TRUE,  Normal Unit)
 
 
-let testExpr1:expr = Match ((Perform ("A", Unit)), ("x", Value Unit, [("A", "x", Resume (Unit))]))
+let performAunit = (Perform ("A", Unit))
+let folowedByUnit = Let ("null", performAunit, Value (Const 1))
+let testExpr1:expr = Match (folowedByUnit, ("x", Value Unit, [("A", "x", Resume (Unit))]))
 
-let test = forward_shell [startState] testExpr1
+let test() = forward_shell [startState] testExpr1
+let performAunitTest () = forward_shell [startState] performAunit
 
-let main = print_string (string_of_spec test)
-
-
-
-
-(*
-
-
- match flow with 
-    | Normal v -> 
-    match expr with
-
-
- -> 
-(* I F E L S E *) 
-    
-(* R E S U M E *) 
-    | Resume v ->
-      (match flow with
-      | Normal -> raise (Foo "resuming but has no continusation")
-      | Eff (eff_n, v, cons) -> 
-        let newCur = (PureAnd (pi, Eq(vTot v, Name str)), flow, c1) in
-        forward newCur e
-      )
+let main = 
+  (* print_string (string_of_expr testExpr1);*)
+  print_string (string_of_spec (test()))
 
 
 
-    
-
-
-*)
