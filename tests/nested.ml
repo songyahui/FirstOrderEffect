@@ -22,6 +22,6 @@ let handle =
     | effect Foo k -> 
         (match print_and_perform_Zoo () with
         | _ -> print_string ("Done Inner \n")
-        | effect Zoo kk -> continue k ()
-        )
+        | effect Zoo kk -> continue kk ()
+        ); continue k ()
     | effect Goo k -> continue k ()

@@ -5,7 +5,6 @@ type argName = string
 type value = Unit
   | Const of int
   | Variable of string
-  | Lambda of (string * expr)
 
 and eff_handler = (effName * argName * expr)
 
@@ -38,9 +37,9 @@ and pure = TRUE
   | PureAnd of pure * pure
   | Neg of pure
 
-and flow = Normal | Eff of (effName * value * spec)
+and flow = Normal of value | Eff of (effName * value * spec)
 
-and single_spec = (pure * value (*result value*) * flow)
+and single_spec = (pure * flow)
 
 and spec = single_spec list
 
@@ -71,7 +70,6 @@ let string_of_v (v:value) : string =
   | Const i -> "const_" ^ string_of_int i
   | Variable s -> "var_" ^ s
   | Unit -> "unit"
-  | Lambda (str, expr) -> "lam_" ^ str
 ;;
 
 
@@ -79,16 +77,15 @@ let rec string_of_spec (li:spec): string =
   let string_of_single_spec (s:single_spec) : string =
     let string_of_flow (f:flow) : string =
       match f with
-      | Normal -> "Normal"
+      | Normal v -> "Normal(" ^ string_of_v v ^ ")"
       | Eff (eff_n, eff_v, ss) ->
         "(" ^ eff_n ^ "," ^ string_of_v eff_v ^ "):\n  "
         ^ string_of_spec ss
     in
-    let (pi, v,  f) = s in
+    let (pi, f) = s in
     let string_of_pi = string_of_pure pi in
-    let string_of_value = string_of_v v in
     let string_of_flow = string_of_flow f in
-    "(" ^ string_of_pi ^","^ string_of_value ^","^ string_of_flow ^ ")"
+    "(" ^ string_of_pi ^","^ string_of_flow ^ ")"
   in List.fold_left (fun acc a -> acc ^ string_of_single_spec a ) "" li
 
 let vTot (v:value) : terms =
@@ -109,38 +106,71 @@ let rec retrive_handler (li: eff_handler list) (eff_name: string) : eff_handler 
 let formLetSeq (e:expr) (e1:expr) : expr =
   Let ("null", e, e1)
 
-let rec forward_shell (curState:spec) (expr:expr) : spec =
+let skip_cont: spec = [(TRUE, Normal Unit)]
+
+let rec forward_shell (preState:spec) (expr:expr) : spec =
   let rec forward (curState:single_spec) (expr:expr) : spec =
-    let (pi, res, flow) = curState in
+    let (pi, flow) = curState in
+    match flow with
+    | Eff (eff_name, eff_v, eff_cons) -> 
+      let expr_spec = forward_shell eff_cons expr in 
+      [(pi, Eff(eff_name, eff_v, expr_spec))]
+    | Normal (v_old) -> 
+      (match expr with 
+      | Value v ->  [(pi, Normal (v))]
+      | Perform (eff, v) -> [(pi, Eff(eff, v, skip_cont))]
+      | Let (x, e1, e2) ->
+        let eff1 = forward curState e1 in
+        forward_shell eff1 e2
+      | IfElse (v, e1, e2) ->
+        let newCur1 = (PureAnd (pi, Eq(vTot v, Num 1)), flow) in
+        let newCur2 = (PureAnd (pi, Eq(vTot v, Num 0)), flow) in
+        let eff1 = forward newCur1 e1 in
+        let eff2 = forward newCur2 e2 in
+        List.append eff1 eff2
+      | Match (e1, handler) ->
+        let (x_base, e_base, eff_han) = handler in
+        let eff1 = forward curState e1 in
+        let aff_final = List.map (fun final -> 
+          let (pi1, f1) = final in
+          match f1 with
+          | Normal v -> forward final e_base
+          | Eff(eff_name, v, cons) ->
+            (match retrive_handler eff_han eff_name with
+            | None -> [final]
+            | Some (_, var_s, e_h)-> forward final (Match (e_h, handler))
+            )
+        ) eff1 in
+        List.flatten aff_final
+      | _ -> raise (Foo "Not yet!") (*| FunCall of (string * string list)*)
+      )
+    
+  in List.flatten (List.map (fun cur -> forward cur expr) preState)
+
+
+let startState = (TRUE,  Normal Unit)
+
+
+let testExpr1:expr = Match ((Perform ("A", Unit)), ("x", Value Unit, [("A", "x", Resume (Unit))]))
+
+let test = forward_shell [startState] testExpr1
+
+let main = print_string (string_of_spec test)
+
+
+
+
+(*
+
+
+ match flow with 
+    | Normal v -> 
     match expr with
-(* V A L U E *)
-    | Value v ->  [(pi, v, flow)]
-(* P E R F O R M *)
-    | Perform (eff, v) -> 
-      let cons =[(TRUE, Unit, Normal)] in [(pi, res, Eff(eff, v, cons))]
-(* L E T *)  
-    | Let (x, e1, e2) ->
-      let eff1 = forward curState e1 in
-      let final_effs :spec list= List.map (
-        fun final->
-          let (pi_f, v_f, flow_f) = final in
-          match flow_f with 
-          | Normal -> forward final e2
-          | Eff (eff_n, v, cons) -> 
-            let reStart = List.map 
-              (fun (cons_pi, cons_v, cons_cons) ->  (cons_pi, Unit, Normal)) cons in 
-            let eff2:spec = forward_shell reStart e2 in
-            [(pi_f, v_f, Eff (eff_n, v, eff2))]
-            
-      ) eff1 in
-      List.flatten final_effs
+
+
+ -> 
 (* I F E L S E *) 
-    | IfElse (v, e1, e2) ->
-      let newCur1 = (PureAnd (pi, Eq(vTot v, Num 1)), res, flow) in
-      let newCur2 = (PureAnd (pi, Eq(vTot v, Num 0)), res, flow) in
-      let eff1 = forward newCur1 e1 in
-      let eff2 = forward newCur2 e2 in
-      List.append eff1 eff2
+    
 (* R E S U M E *) 
     | Resume v ->
       (match flow with
@@ -151,46 +181,8 @@ let rec forward_shell (curState:spec) (expr:expr) : spec =
       )
 
 
-    | _ -> raise (Foo "Not yet!") (*| FunCall of (string * string list)*)
-  
 
-  in List.flatten (List.map (fun cur -> forward cur expr) curState)
-
-
-let startState = (TRUE, Unit,  Normal)
-
-
-let testExpr1:expr = Match ((Perform ("A", Unit)), ("x", Value Unit, [("A", "x", Value Unit)]))
-
-let test = forward_shell [startState] testExpr1
-
-
-
-
-(*
-
-
-
-
-
-
-| Match (e1, handler) ->
-    let (x_base, e_base, eff_han) = handler in
-    let eff1 = forward curState e1 in
-    let aff_final = List.map (fun final ->
-  let (pi1, f1, c1) = final in
-  match f1 with
-  | Normal -> forward final e_base
-  | Eff(eff_name, v) ->
-(match retrive_handler eff_han eff_name with
-| None -> [final]
-| Some (_, var_s, e_h)->
-    (* Recursively catching it*)
-
-    forward final (Match (e_h, handler))
-)
-    ) eff1 in
-    List.flatten aff_final
+    
 
 
 *)
