@@ -139,8 +139,8 @@ let formLetSeq (e:expr) (e1:expr) : expr =
 
 let skip_cont: spec = [(TRUE, Normal Unit)]
 
-let rec forward_shell (preHandler:handler list)  (preState:spec) (exprOut:expr) : spec =
-  let rec forward (curHandler:handler list) (curState:single_spec) (exprIn:expr) : spec =
+let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr) : spec =
+  let rec forward (curHandler:handler option) (curState:single_spec) (exprIn:expr) : spec =
     (*
     print_string ("=================\n");
     print_string (string_of_spec [curState]^"\n");
@@ -152,40 +152,22 @@ let rec forward_shell (preHandler:handler list)  (preState:spec) (exprOut:expr) 
 
     match flow with
     | Eff (eff_name, eff_v, eff_cons) -> 
-      (match exprIn with 
-      | Resume v ->
-        (match curHandler with 
-        | [] -> raise (Foo "resuming but has no handler")
-        | (han)::xs -> List.flatten (List.map (fun final -> 
-          let (x_base, e_base, eff_han) = han in
-          let (expr_pi, expr_f) = final in 
-          print_string (string_of_spec [final] ^"\n");
-
-          match expr_f with
-          | Normal v -> forward xs final e_base
-          | Eff(eff_nameIn, eff_vIn, eff_consIn) ->
-            (match retrive_handler eff_han eff_nameIn with
-            | None -> [final]
-            | Some (_, var_s, e_h)-> 
-             
-              forward curHandler final e_h
-            )
-          ) eff_cons)
-        )
-      | Let (_, Resume v, e2) -> 
-        let expr_spec = forward curHandler curState (Resume v) in 
-        forward_shell (List.tl curHandler) expr_spec e2
-      | _ ->
-        let expr_spec = forward_shell curHandler eff_cons exprIn in 
+      let expr_spec = forward_shell curHandler eff_cons exprIn in 
         [(pi, Eff(eff_name, eff_v, expr_spec))]
-      )
     | Normal (v_old) -> 
       (match exprIn with 
       | Value v ->  [(pi, Normal (v))]
       | Perform (eff, v) -> [(pi, Eff(eff, v, skip_cont))]
       | Let (x, e1, e2) ->
-        let eff1 = forward curHandler curState e1 in
-        forward_shell curHandler eff1 e2
+        (match e1 with 
+        | Resume v -> 
+          let expr_spec = forward curHandler curState (Resume v) in 
+          forward_shell None expr_spec e2
+        | _ -> 
+          let eff1 = forward curHandler curState e1 in
+          forward_shell curHandler eff1 e2
+        )
+        
       | IfElse (v, e1, e2) ->
         let newCur1 = (PureAnd (pi, Eq(vTot v, Num 1)), flow) in
         let newCur2 = (PureAnd (pi, Eq(vTot v, Num 0)), flow) in
@@ -207,12 +189,33 @@ let rec forward_shell (preHandler:handler list)  (preState:spec) (exprOut:expr) 
               print_string (string_of_spec [final] ^"\n");
               *)
 
-              forward_shell (handler:: curHandler) cons e_h
+              forward_shell (Some handler) cons e_h
             )
         ) eff1 in
         List.flatten aff_final
 
-      | Resume v -> raise (Foo "resuming but has no continusation")
+      | Resume v -> 
+        (match curHandler with 
+        | None -> raise (Foo "resuming but has no handler")
+        | Some (han) -> 
+          let (x_base, e_base, eff_han) = han in
+          let (expr_pi, expr_f) = curState in 
+          
+          match expr_f with
+          | Normal v -> 
+            (*print_string ("hahhahahhaha\n");
+            print_string (string_of_expr e_base ^ "\n");
+            print_string (string_of_spec (forward xs curState e_base) ^ "\n");
+            *)
+
+            forward None curState e_base
+          | Eff(eff_nameIn, eff_vIn, eff_consIn) ->
+            (match retrive_handler eff_han eff_nameIn with
+            | None -> [curState]
+            | Some (_, var_s, e_h)-> 
+              forward curHandler curState e_h
+            )
+          ) 
       | _ -> raise (Foo "Not yet!") (*| FunCall of (string * string list)*)
       )
     
@@ -224,23 +227,28 @@ let startState = (TRUE,  Normal Unit)
 
 let performAunit = (Perform ("A", Unit))
 let folowedByUnit = Let ("null", performAunit, Value (Const 1))
-let testExpr1:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", performAunit)]))
+let seqE1E2 e1 e2 = Let ("null", e1, e2)
+let resumeUnit = Resume (Unit)
+let resumeUnitCons = Let ("null", resumeUnit, Value (Const 30))
+let testExpr1:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", seqE1E2 performAunit resumeUnit)]))
 let testExprNoResume:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", Value (Unit))]))
 let testExpr2:expr = 
   Match (folowedByUnit, 
   ("x", Value (Const 100), [("A", "x", Let("null", Resume (Unit), Value (Const 50)))]))
 
+let handleTestExpr1:expr = Match (testExpr1, ("x", Value (Const 1000), [("A", "x", resumeUnit)]))
 
 
-let test() = forward_shell [] [startState] testExpr1
-let performAunitTest () = forward_shell  [] [startState] performAunit
+
+let test() = forward_shell None [startState] testExpr1
+let performAunitTest () = forward_shell  None [startState] performAunit
 
 let test_shell expr =
   print_string (string_of_expr expr); 
-  let eff = forward_shell [] [startState] expr in 
+  let eff = forward_shell None [startState] expr in 
   print_string("\n--------------\n" ^string_of_spec eff)
 
 
-let main = test_shell testExpr1
+let main = test_shell handleTestExpr1
 
 
