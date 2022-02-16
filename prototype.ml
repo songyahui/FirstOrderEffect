@@ -60,7 +60,7 @@ let rec string_of_pure (p:pure):string =
   | Lt (t1, t2) -> (string_of_terms t1) ^ "<" ^ (string_of_terms t2)
   | GtEq (t1, t2) -> (string_of_terms t1) ^ ">=" ^ (string_of_terms t2)
   | LtEq (t1, t2) -> (string_of_terms t1) ^ "<=" ^ (string_of_terms t2)
-  | Eq (t1, t2) -> (string_of_terms t1) ^ "==" ^ (string_of_terms t2)
+  | Eq (t1, t2) -> (string_of_terms t1) ^ "=" ^ (string_of_terms t2)
   | PureOr (p1, p2) -> "("^string_of_pure p1 ^ "\\/" ^ string_of_pure p2^")"
   | PureAnd (p1, p2) -> "("^string_of_pure p1 ^ "/\\" ^ string_of_pure p2^")"
   | Neg p -> "(!" ^ "(" ^ string_of_pure p^"))"
@@ -80,14 +80,18 @@ let rec string_of_spec (li:spec): string =
       match f with
       | Normal v -> "Normal(" ^ string_of_v v ^ ")"
       | Eff (eff_n, eff_v, ss) ->
-        "Eff(" ^ eff_n ^ "," ^ string_of_v eff_v ^ "):\n  "
+        "Eff(" ^ eff_n ^ " " ^ string_of_v eff_v ^ " "
         ^ string_of_spec ss
     in
     let (pi, f) = s in
     let string_of_pi = string_of_pure pi in
     let string_of_flow = string_of_flow f in
     "(" ^ string_of_pi ^","^ string_of_flow ^ ")"
-  in List.fold_left (fun acc a -> acc ^ string_of_single_spec a ) "" li
+  in 
+  match li with 
+  | [] -> "No Spec"
+  | [a] -> string_of_single_spec a
+  | a::xs -> (string_of_single_spec a) ^ "\n \\/ \n" ^  string_of_spec xs 
 
 let vTot (v:value) : terms =
   match v with
@@ -131,7 +135,7 @@ let rec string_of_expr (expr:expr): string =
   | Perform (eff, v) -> "perform (" ^ eff ^ " "^ string_of_v v ^")"
   | Value v -> string_of_v v 
   | Let (var, e1, e2) -> "let " ^ var ^" = " ^ string_of_expr e1 ^ " in " ^ string_of_expr e2 
-  | IfElse (v, e1, e2) -> "if " ^ string_of_v v ^ " then " ^ string_of_expr e1 ^ "\n else " ^ string_of_expr e2 
+  | IfElse (v, e1, e2) -> "if " ^ string_of_v v ^ " then " ^ string_of_expr e1 ^ "\nelse " ^ string_of_expr e2 
   | FunCall (mn, varLi) -> mn ^ "(" ^ string_of_arg_list varLi ^")"
  ;;
 
@@ -166,19 +170,44 @@ let concatenateSpec ((pi, f): single_spec) (tail:spec) : spec =
 
 let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (preState:spec) (exprOut:expr) : spec =
   let rec forward (curHandler:(handler*spec) option) (curState:single_spec) (exprIn:expr) : spec =
-    (*
-    print_string ("=================\n");
+    
+    (*print_string ("=================\n");
     print_string (string_of_spec [curState]^"\n");
-    print_string (string_of_expr exprIn ^ "\n");
-    *)
+    print_string (string_of_expr exprIn ^ "\n");*)
+    
 
     let (pi, flow) = curState in
     let pi = normalPure pi in 
 
     match flow with
     | Eff (eff_name, eff_v, eff_cons) -> 
-      let expr_spec = forward_shell program curHandler eff_cons exprIn in 
+      (match exprIn with 
+      | Match (e1, handler) ->
+
+        let (x_base, e_base, eff_han) = handler in
+        let eff1 = forward curHandler curState e1 in
+
+
+        let aff_final = List.map (fun final -> 
+          let (pi1, f1) = final in
+          match f1 with
+          | Normal v -> forward curHandler final e_base
+          | Eff(eff_name, v, cons) ->
+            (match retrive_handler eff_han eff_name with
+            | None -> [final]
+            | Some (_, var_s, e_h)-> 
+              (*print_string (string_of_expr exprIn ^"\n");
+              print_string (string_of_spec [final] ^"\n");
+              *)
+              
+              forward (Some (handler, cons)) (pi1, Normal(Unit)) e_h
+            )
+        ) eff1 in
+        List.flatten aff_final
+      | _ ->
+        let expr_spec = forward_shell program curHandler eff_cons exprIn in 
         [(pi, Eff(eff_name, eff_v, expr_spec))]
+      )
     | Normal (v_old) -> 
       (match exprIn with 
       | Value v ->  [(pi, Normal (v))]
@@ -190,7 +219,12 @@ let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (pre
           forward_shell program None expr_spec e2
         | _ -> 
           let eff1 = forward curHandler curState e1 in
-          forward_shell program curHandler eff1 e2
+          List.flatten (List.map (fun (eff1_pi, eff1_f) -> 
+            match eff1_f with
+            | Normal eff1_v -> forward curHandler (PureAnd(eff1_pi, Eq(Name x, vTot eff1_v)), eff1_f) e2
+            | _ -> forward_shell program curHandler eff1 e2
+          ) eff1)
+          
         )
         
       | IfElse (v, e1, e2) ->
@@ -200,8 +234,11 @@ let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (pre
         let eff2 = forward curHandler newCur2 e2 in
         List.append eff1 eff2
       | Match (e1, handler) ->
+
         let (x_base, e_base, eff_han) = handler in
         let eff1 = forward curHandler curState e1 in
+        
+
         let aff_final = List.map (fun final -> 
           let (pi1, f1) = final in
           match f1 with
@@ -238,7 +275,7 @@ let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (pre
             (match retrive_handler eff_han eff_nameIn with
             | None -> [final]
             | Some (_, var_s, e_h)-> 
-              forward curHandler final e_h
+              forward None final (Match (Value(Unit), han))
             )
           ) spec
           in List.flatten hahah
@@ -264,11 +301,17 @@ let verification (program:program) : bool =
 
   List.fold_left (fun acc a -> acc && (verifier a)) true program
 
+(*** Tests ***)
 
 let startState = (TRUE,  Normal Unit)
 
 
 let performAunit = (Perform ("A", Unit))
+let performBunit = (Perform ("B", Unit))
+let const3 = Value (Const 3)
+let const5 = Value (Const 5)
+let const50 = Value (Const 50)
+
 let folowedByUnit = Let ("_", performAunit, Value (Const 1))
 let seqE1E2 e1 e2 = Let ("_", e1, e2)
 let resumeUnit = Resume (Unit)
@@ -281,18 +324,52 @@ let testExpr2:expr =
 
 let handleTestExpr1:expr = Match (testExpr1, ("x", Value (Const 1000), [("A", "x", resumeUnit)]))
 
+let ifElse = IfElse (Variable "x", performAunit, const3)
+let ifElseElse = IfElse (Variable "x", performAunit, IfElse (Variable "y", performBunit, const3))
 
+let handler1:expr = Match (ifElse, ("x", Value (Const 100), [("A", "x", resumeUnit )]))
+let handlerskip:expr = Match (ifElse, ("x", Value (Const 100), [("A", "x", const3 )]))
+let handlerLeakB:expr = Match (ifElse, ("x", Value (Const 100), [("B", "x", resumeUnit )]))
+let lerseqAB:expr = seqE1E2 performAunit performBunit
+
+let handlerseqAB:expr = Match (seqE1E2 performAunit performBunit, ("x", Value (Const 100), [("A", "x", resumeUnit);("B", "x", resumeUnit )]))
+
+let handlerseqARest:expr = Match (performAunit, ("x", Value (Const 100), [("A", "x", seqE1E2 resumeUnit const3)]))
+
+let handlerseqABRest:expr = Match (seqE1E2 performAunit performBunit, ("x", Value (Const 100), [("A", "x", seqE1E2 resumeUnit const5);("B", "x", seqE1E2 resumeUnit const50 )]))
+
+let handlerseqBARest:expr = Match (seqE1E2 performBunit performAunit, ("x", Value (Const 100), [("A", "x", seqE1E2 resumeUnit const5);("B", "x", seqE1E2 resumeUnit const50 )]))
+
+let x1ifElse = Let ("x", Value(Const 1), ifElse)
+
+let xy1Ifelse = Let ("y", Value(Const 1), Let ("x", Value(Variable "y"), ifElse))
 
 let test() = forward_shell [] None [startState] testExpr1
 let performAunitTest () = forward_shell []  None [startState] performAunit
 
-let test_shell expr =
-  print_string("\n==============\n");
-  print_string (string_of_expr expr); 
-  let eff = forward_shell [] None [startState] expr in 
-  print_string("--------------\nFinal = " ^string_of_spec eff ^"\n\n")
+let test_shell (exprLi:expr list) =
+  List.fold_left (fun acc expr -> 
+    print_string("\n=====" ^ "TEST " ^ string_of_int acc ^"=========\n\n");
+    print_string (string_of_expr expr); 
+    let eff = forward_shell [] None [startState] expr in 
+    print_string("\n--------------\nFinal = \n" ^string_of_spec eff ^"\n\n");
+    acc + 1
+  ) 1 exprLi 
 
 
-let main = test_shell handleTestExpr1
+let main = test_shell 
+[handleTestExpr1;
+  ifElse;
+  x1ifElse;
+  xy1Ifelse;
+  ifElseElse;
+  handler1;
+  handlerskip;
+  handlerLeakB;
+  lerseqAB;
+  handlerseqAB;
+  handlerseqARest;
+  handlerseqABRest;
+  handlerseqBARest]
 
 
