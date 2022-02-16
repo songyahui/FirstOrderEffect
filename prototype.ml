@@ -1,6 +1,7 @@
 exception Foo of string
 type effName = string
 type argName = string
+type mn = string
 
 type value = Unit
   | Const of int
@@ -18,7 +19,7 @@ and expr = Value of value
   | Perform of (string * value)
   | Resume of value
 
-and meth = (string * string list * expr * spec * spec)
+and meth = (mn * argName list * expr * spec * spec)
 
 and program = meth list
 
@@ -103,6 +104,13 @@ let rec retrive_handler (li: eff_handler list) (eff_name: string) : eff_handler 
   else retrive_handler xs eff_name
 ;;
 
+let rec string_of_arg_list (li:string list):string = 
+  match li with 
+  | [] -> ""
+  | [x] -> x 
+  | x::xs -> x ^ "," ^ string_of_arg_list xs
+;;
+
 
 let rec string_of_expr (expr:expr): string = 
   
@@ -111,20 +119,21 @@ let rec string_of_expr (expr:expr): string =
       match handLi with 
       | [] -> ""
       | (eff_name, eff_var, eff_e)::xs -> "| effect (" ^ eff_name 
-        ^ " " ^ eff_var ^ ") k -> " ^ string_of_expr eff_e ^"\n" ^ helper xs 
+        ^ " " ^ eff_var ^ ") -> " ^ string_of_expr eff_e ^"\n" ^ helper xs 
     in 
     let (base_v, base_e, li) = handler in 
     "| " ^ base_v ^ " -> " ^ string_of_expr base_e ^ "\n" ^  helper li
   in
 
   match expr with 
-  | Resume v -> "continue k "^ string_of_v v 
-  | Match (e1, handler) -> "match " ^ string_of_expr e1 ^ " with \n" ^ string_of_handler handler
+  | Resume v -> "resume "^ string_of_v v 
+  | Match (e1, handler) -> "match (" ^ string_of_expr e1 ^ ") with \n" ^ string_of_handler handler
   | Perform (eff, v) -> "perform (" ^ eff ^ " "^ string_of_v v ^")"
   | Value v -> string_of_v v 
   | Let (var, e1, e2) -> "let " ^ var ^" = " ^ string_of_expr e1 ^ " in " ^ string_of_expr e2 
-  | _ -> raise (Foo "later")
-;;
+  | IfElse (v, e1, e2) -> "if " ^ string_of_v v ^ " then " ^ string_of_expr e1 ^ "\n else " ^ string_of_expr e2 
+  | FunCall (mn, varLi) -> mn ^ "(" ^ string_of_arg_list varLi ^")"
+ ;;
 
 let normalPure (pi:pure) : pure = 
 match pi with 
@@ -133,14 +142,30 @@ match pi with
 ;;
 
 
+let entailment (_:spec) (_:spec) : bool = true 
+
+
+
 
 let formLetSeq (e:expr) (e1:expr) : expr =
-  Let ("null", e, e1)
+  Let ("_", e, e1)
 
 let skip_cont: spec = [(TRUE, Normal Unit)]
 
-let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr) : spec =
-  let rec forward (curHandler:handler option) (curState:single_spec) (exprIn:expr) : spec =
+let rec findMethod (program:program) (str:string) : (spec* spec) option =
+  match program with 
+  | [] -> None 
+  | (mn, _, _, pre, post):: xs ->  if String.compare str mn == 0 then Some (pre, post) else findMethod xs str
+  ;;
+
+let concatenateSpec ((pi, f): single_spec) (tail:spec) : spec = 
+  match f with 
+  | Normal v -> List.map (fun (a, b)-> (PureAnd(a, pi), b)) tail
+  | Eff (eff_name, eff_v, eff_cons) -> [(pi, Eff(eff_name, eff_v, tail))]
+  ;;
+
+let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (preState:spec) (exprOut:expr) : spec =
+  let rec forward (curHandler:(handler*spec) option) (curState:single_spec) (exprIn:expr) : spec =
     (*
     print_string ("=================\n");
     print_string (string_of_spec [curState]^"\n");
@@ -152,7 +177,7 @@ let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr
 
     match flow with
     | Eff (eff_name, eff_v, eff_cons) -> 
-      let expr_spec = forward_shell curHandler eff_cons exprIn in 
+      let expr_spec = forward_shell program curHandler eff_cons exprIn in 
         [(pi, Eff(eff_name, eff_v, expr_spec))]
     | Normal (v_old) -> 
       (match exprIn with 
@@ -162,10 +187,10 @@ let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr
         (match e1 with 
         | Resume v -> 
           let expr_spec = forward curHandler curState (Resume v) in 
-          forward_shell None expr_spec e2
+          forward_shell program None expr_spec e2
         | _ -> 
           let eff1 = forward curHandler curState e1 in
-          forward_shell curHandler eff1 e2
+          forward_shell program curHandler eff1 e2
         )
         
       | IfElse (v, e1, e2) ->
@@ -188,8 +213,8 @@ let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr
               (*print_string (string_of_expr exprIn ^"\n");
               print_string (string_of_spec [final] ^"\n");
               *)
-
-              forward_shell (Some handler) cons e_h
+              
+              forward (Some (handler, cons)) (pi1, Normal(Unit)) e_h
             )
         ) eff1 in
         List.flatten aff_final
@@ -197,10 +222,10 @@ let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr
       | Resume v -> 
         (match curHandler with 
         | None -> raise (Foo "resuming but has no handler")
-        | Some (han) -> 
+        | Some (han, spec) -> 
+          let hahah = List.map (fun final->  
           let (x_base, e_base, eff_han) = han in
-          let (expr_pi, expr_f) = curState in 
-          
+          let (expr_pi, expr_f) = final in 
           match expr_f with
           | Normal v -> 
             (*print_string ("hahhahahhaha\n");
@@ -208,45 +233,64 @@ let rec forward_shell (preHandler:handler option)  (preState:spec) (exprOut:expr
             print_string (string_of_spec (forward xs curState e_base) ^ "\n");
             *)
 
-            forward None curState e_base
+            forward None final e_base
           | Eff(eff_nameIn, eff_vIn, eff_consIn) ->
             (match retrive_handler eff_han eff_nameIn with
-            | None -> [curState]
+            | None -> [final]
             | Some (_, var_s, e_h)-> 
-              forward curHandler curState e_h
+              forward curHandler final e_h
             )
-          ) 
-      | _ -> raise (Foo "Not yet!") (*| FunCall of (string * string list)*)
+          ) spec
+          in List.flatten hahah
+        )
+      | FunCall (mn, _) -> 
+        (match findMethod program mn with 
+        | None -> raise (Foo ("Method " ^ mn ^" is not defined!\n"))
+        | Some (pre, post) -> 
+          if entailment [curState] pre then concatenateSpec curState post
+          else  raise (Foo ("Method " ^ mn ^" precondition is not met!\n"))
+        )
       )
     
   in List.flatten (List.map (fun cur -> forward preHandler cur exprOut) preState)
+
+
+let verification (program:program) : bool = 
+  let verifier (meth:meth) : bool =
+    let (_, _, expr, pre, post) = meth in 
+    let finalL = forward_shell program None pre expr in  
+    entailment finalL post
+  in 
+
+  List.fold_left (fun acc a -> acc && (verifier a)) true program
 
 
 let startState = (TRUE,  Normal Unit)
 
 
 let performAunit = (Perform ("A", Unit))
-let folowedByUnit = Let ("null", performAunit, Value (Const 1))
-let seqE1E2 e1 e2 = Let ("null", e1, e2)
+let folowedByUnit = Let ("_", performAunit, Value (Const 1))
+let seqE1E2 e1 e2 = Let ("_", e1, e2)
 let resumeUnit = Resume (Unit)
-let resumeUnitCons = Let ("null", resumeUnit, Value (Const 30))
+let resumeUnitCons = Let ("_", resumeUnit, Value (Const 30))
 let testExpr1:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", seqE1E2 performAunit resumeUnit)]))
 let testExprNoResume:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", Value (Unit))]))
 let testExpr2:expr = 
   Match (folowedByUnit, 
-  ("x", Value (Const 100), [("A", "x", Let("null", Resume (Unit), Value (Const 50)))]))
+  ("x", Value (Const 100), [("A", "x", Let("_", Resume (Unit), Value (Const 50)))]))
 
 let handleTestExpr1:expr = Match (testExpr1, ("x", Value (Const 1000), [("A", "x", resumeUnit)]))
 
 
 
-let test() = forward_shell None [startState] testExpr1
-let performAunitTest () = forward_shell  None [startState] performAunit
+let test() = forward_shell [] None [startState] testExpr1
+let performAunitTest () = forward_shell []  None [startState] performAunit
 
 let test_shell expr =
+  print_string("\n==============\n");
   print_string (string_of_expr expr); 
-  let eff = forward_shell None [startState] expr in 
-  print_string("\n--------------\n" ^string_of_spec eff)
+  let eff = forward_shell [] None [startState] expr in 
+  print_string("--------------\nFinal = " ^string_of_spec eff ^"\n\n")
 
 
 let main = test_shell handleTestExpr1
