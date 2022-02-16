@@ -207,7 +207,7 @@ let rec forward_shell (preHandler:handler list)  (preState:spec) (exprOut:expr) 
               print_string (string_of_spec [final] ^"\n");
               *)
 
-              forward (handler:: curHandler) final e_h
+              forward_shell (handler:: curHandler) cons e_h
             )
         ) eff1 in
         List.flatten aff_final
@@ -224,7 +224,7 @@ let startState = (TRUE,  Normal Unit)
 
 let performAunit = (Perform ("A", Unit))
 let folowedByUnit = Let ("null", performAunit, Value (Const 1))
-let testExpr1:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", Resume (Unit))]))
+let testExpr1:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", performAunit)]))
 let testExprNoResume:expr = Match (folowedByUnit, ("x", Value (Const 100), [("A", "x", Value (Unit))]))
 let testExpr2:expr = 
   Match (folowedByUnit, 
@@ -232,12 +232,15 @@ let testExpr2:expr =
 
 
 
-let test() = forward_shell [] [startState] testExpr2
+let test() = forward_shell [] [startState] testExpr1
 let performAunitTest () = forward_shell  [] [startState] performAunit
 
-let main = 
-  print_string (string_of_expr testExpr2);
-  print_string (string_of_spec (test()))
+let test_shell expr =
+  print_string (string_of_expr expr); 
+  let eff = forward_shell [] [startState] expr in 
+  print_string("\n--------------\n" ^string_of_spec eff)
 
+
+let main = test_shell testExpr1
 
 
