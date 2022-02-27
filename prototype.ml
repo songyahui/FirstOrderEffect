@@ -1,4 +1,58 @@
+open Printf
 exception Foo of string
+
+
+let rec iter f = function
+  | [] -> ()
+  | [x] ->
+      f true x
+  | x :: tl ->
+      f false x;
+      iter f tl
+
+
+let to_buffer ?(line_prefix = "") ~get_name ~get_children buf x =
+  let rec print_root indent x =
+    bprintf buf "%s\n" (get_name x);
+    let children = get_children x in
+    iter (print_child indent) children
+  and print_child indent is_last x =
+    let line =
+      if is_last then
+        "└── "
+      else
+        "├── "
+    in
+    bprintf buf "%s%s" indent line;
+    let extra_indent =
+      if is_last then
+        "    "
+      else
+        "│   "
+    in
+    print_root (indent ^ extra_indent) x
+  in
+  Buffer.add_string buf line_prefix;
+  print_root line_prefix x
+
+let printTree ?line_prefix ~get_name ~get_children x =
+  let buf = Buffer.create 1000 in
+  to_buffer ?line_prefix ~get_name ~get_children buf x;
+  Buffer.contents buf
+
+type binary_tree =
+  | Node of string * (binary_tree  list )
+  | Leaf
+
+let get_name = function
+    | Leaf -> "."
+    | Node (name, li) -> name;;
+
+let get_children = function
+    | Leaf -> []
+    | Node (_, li) -> List.filter ((<>) Leaf) li;;
+
+
 type effName = string
 type argName = string
 type mn = string
@@ -91,7 +145,7 @@ let rec string_of_spec (li:spec): string =
   match li with 
   | [] -> "No Spec"
   | [a] -> string_of_single_spec a
-  | a::xs -> (string_of_single_spec a) ^ "\n \\/ \n" ^  string_of_spec xs 
+  | a::xs -> (string_of_single_spec a) ^ " \\/ " ^  string_of_spec xs 
 
 let vTot (v:value) : terms =
   match v with
@@ -148,7 +202,6 @@ match pi with
 ;;
 
 
-let entailment (_:spec) (_:spec) : bool = true 
 
 
 
@@ -169,6 +222,55 @@ let concatenateSpec ((pi, f): single_spec) (tail:spec) : spec =
   | Normal v -> List.map (fun (a, b)-> (PureAnd(a, pi), b)) tail
   | Eff (eff_name, eff_v, eff_cons) -> [(pi, Eff(eff_name, eff_v, tail))]
   ;;
+
+let nullable (spec:spec) : bool = 
+  List.fold_left (fun acc (pi, f) -> acc || 
+    match f with 
+    | Normal _ -> true 
+    | Eff _ -> false 
+  ) false spec;;
+
+let fst (spec:spec): (effName * value) list = 
+  List.flatten (List.map (fun  (pi, f) ->
+    match f with 
+    | Normal _ -> [] 
+    | Eff (name, v, _) -> [(name, v)] 
+  ) spec)
+
+let compareV (v1:value) (v2:value) : bool =
+  match (v1, v2) with 
+  | (Unit, Unit) -> true
+  | (Const n1, Const n2) -> n1 == n2
+  | (Variable v1, Variable v2) -> String.compare v1 v2 == 0 
+  | _ -> false
+;;
+
+
+let derivitive (spec:spec) (inp_f: (effName * value)): spec = 
+  let (inp_name, inp_v) = inp_f in 
+  List.flatten (List.map (fun  (pi, f) ->
+    match f with 
+    | Normal _ -> []
+    | Eff (name, v, cons) -> if String.compare name inp_name ==0 && compareV v inp_v then cons else []
+  ) spec)
+
+let showEntail (eff1:spec)( eff2:spec):string = string_of_spec eff1 ^ " |- "  ^ string_of_spec eff2;;
+
+
+(* Entailent *)
+let rec entailment (lhs:spec) (rhs:spec) : (bool*binary_tree) = 
+  if nullable lhs && (not (nullable rhs)) then (false, Node(showEntail lhs rhs^ "   [Nullable]", [])) 
+  else let f_Set = fst lhs in 
+  let (res, subtrees) = 
+  List.fold_left (fun acc f -> 
+    (let (acc_bool, acc_tree) = acc in 
+     let der_lhs = derivitive lhs f in 
+     let der_rhs = derivitive rhs f in   
+     let (new_bool, new_tree) = entailment der_lhs der_rhs in 
+     (acc_bool && new_bool, new_tree :: acc_tree )
+    )
+  ) (true, [])  f_Set in 
+  (res, Node(showEntail lhs rhs ^ "   [Unfold]", subtrees) )
 
 let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (preState:spec) (exprOut:expr) : spec =
   let rec forward (curHandler:(handler*spec) option) (curState:single_spec) (exprIn:expr) : spec =
@@ -286,64 +388,18 @@ let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (pre
         (match findMethod program mn with 
         | None -> raise (Foo ("Method " ^ mn ^" is not defined!\n"))
         | Some (pre, post) -> 
-          if entailment [curState] pre then concatenateSpec curState post
-          else  raise (Foo ("Method " ^ mn ^" precondition is not met!\n"))
+          let (res, tree) = entailment [curState] pre in 
+          let print_Tree = printTree ~line_prefix:"* " ~get_name ~get_children tree in 
+          if res then concatenateSpec curState post
+          else  raise (Foo ("Method " ^ mn ^" precondition is not met!\n" ^ print_Tree))
         )
       )
     
   in List.flatten (List.map (fun cur -> forward preHandler cur exprOut) preState)
 
 
-let verification (program:program) : bool = 
-  let verifier (meth:meth) : bool =
-    let (_, _, expr, pre, post) = meth in 
-    let finalL = forward_shell program None pre expr in  
-    entailment finalL post
-  in 
-
-  List.fold_left (fun acc a -> acc && (verifier a)) true program
 
 
-let nullable (spec:spec) : bool = 
-  List.fold_left (fun acc (pi, f) -> 
-    match f with 
-    | Normal _ -> true 
-    | Eff _ -> false 
-  ) false spec;;
-
-let fst (spec:spec): (effName * value) list = 
-  List.flatten (List.map (fun  (pi, f) ->
-    match f with 
-    | Normal _ -> [] 
-    | Eff (name, v, _) -> [(name, v)] 
-  ) spec)
-
-let compareV (v1:value) (v2:value) : bool =
-  match (v1, v2) with 
-  | (Unit, Unit) -> true
-  | (Const n1, Const n2) -> n1 == n2
-  | (Variable v1, Variable v2) -> String.compare v1 v2 == 0 
-;;
-
-
-let derivitive (spec:spec) (inp_f: (effName * value)): spec = 
-  let (inp_name, inp_v) = inp_f in 
-  List.flatten (List.map (fun  (pi, f) ->
-    match f with 
-    | Normal _ -> []
-    | Eff (name, v, cons) -> if String.compare name inp_name ==0 && compareV v inp_v then cons else []
-  ) spec)
-
-(* Entailent *)
-let rec trs (lhs:spec) (rhs:spec) : bool = 
-  if nullable lhs && (not (nullable rhs)) then false 
-  else let f_Set = fst lhs in 
-  List.fold_left (fun acc f -> acc && 
-    (let der_lhs = derivitive lhs f in 
-     let der_rhs = derivitive rhs f in   
-     trs der_lhs der_rhs
-    )
-  ) true  f_Set
 
 (*** Tests ***)
 
@@ -391,9 +447,9 @@ let xy1Ifelse = Let ("y", Value(Const 1), Let ("x", Value(Variable "y"), ifElse)
 let test() = forward_shell [] None [startState] testExpr1
 let performAunitTest () = forward_shell []  None [startState] performAunit
 
-let test_shell (exprLi:expr list) =
+let test_expression (exprLi:expr list) =
   List.fold_left (fun acc expr -> 
-    print_string("\n=====" ^ "TEST " ^ string_of_int acc ^"=========\n\n");
+    print_string("\n=====" ^ "TEST EXPR" ^ string_of_int acc ^"=========\n\n");
     print_string (string_of_expr expr); 
     let eff = forward_shell [] None [startState] expr in 
     print_string("\n--------------\nFinal = \n" ^string_of_spec eff ^"\n\n");
@@ -401,8 +457,30 @@ let test_shell (exprLi:expr list) =
   ) 1 exprLi 
 
 
-let main = test_shell 
-[handleTestExpr1;
+let ifelseP = ("f", ["x"],  ifElse ,  [(TRUE, Normal (Unit))] ,  [(TRUE, Normal (Const 3));(TRUE, Eff ("A", Unit, [(TRUE, Normal Unit)]))])
+let handlerP:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", resumeUnit )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Unit))])
+let handlerP1:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", Value (Unit) )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Unit))])
+
+
+let test_program (exprLi:program) =
+  List.fold_left (fun acc (p_name, argL, expr, pre, post) -> 
+    print_string("\n=====" ^ "TEST PRGM" ^ string_of_int acc ^"=========\n\n");
+    print_string (string_of_expr expr); 
+    let eff = forward_shell exprLi None pre expr in 
+    print_string("\n--------------\nFinal = \n" ^string_of_spec eff ^"\n\n");
+    let (result, tree) =  entailment eff post in 
+    let print_Tree = printTree ~line_prefix:"* " ~get_name ~get_children tree in 
+    
+    let () = (if result then print_string ("post conditions hold\n" ^ print_Tree)
+    else print_string ("post conditions fail\n"^ print_Tree) ) in 
+    acc + 1
+  ) 1 exprLi 
+
+
+let main = test_program [ifelseP; handlerP; handlerP1]
+ (*
+ test_expression 
+  [handleTestExpr1;
   ifElse;
   x1ifElse;
   xy1Ifelse;
@@ -415,5 +493,6 @@ let main = test_shell
   handlerseqARest;
   handlerseqABRest;
   handlerseqBARest]
+  *)
 
 
