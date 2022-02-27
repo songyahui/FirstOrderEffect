@@ -142,6 +142,8 @@ let rec string_of_expr (expr:expr): string =
 let normalPure (pi:pure) : pure = 
 match pi with 
 | PureAnd (TRUE, TRUE) -> TRUE
+| PureAnd (TRUE, other) -> other
+| PureAnd (other, TRUE) -> other
 | _ -> pi
 ;;
 
@@ -270,7 +272,7 @@ let rec forward_shell (program:program) (preHandler:(handler*spec) option)  (pre
             print_string (string_of_spec (forward xs curState e_base) ^ "\n");
             *)
 
-            forward None final e_base
+            forward None curState e_base
           | Eff(eff_nameIn, eff_vIn, eff_consIn) ->
             (match retrive_handler eff_han eff_nameIn with
             | None -> [final]
