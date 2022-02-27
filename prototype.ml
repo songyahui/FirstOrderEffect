@@ -303,6 +303,48 @@ let verification (program:program) : bool =
 
   List.fold_left (fun acc a -> acc && (verifier a)) true program
 
+
+let nullable (spec:spec) : bool = 
+  List.fold_left (fun acc (pi, f) -> 
+    match f with 
+    | Normal _ -> true 
+    | Eff _ -> false 
+  ) false spec;;
+
+let fst (spec:spec): (effName * value) list = 
+  List.flatten (List.map (fun  (pi, f) ->
+    match f with 
+    | Normal _ -> [] 
+    | Eff (name, v, _) -> [(name, v)] 
+  ) spec)
+
+let compareV (v1:value) (v2:value) : bool =
+  match (v1, v2) with 
+  | (Unit, Unit) -> true
+  | (Const n1, Const n2) -> n1 == n2
+  | (Variable v1, Variable v2) -> String.compare v1 v2 == 0 
+;;
+
+
+let derivitive (spec:spec) (inp_f: (effName * value)): spec = 
+  let (inp_name, inp_v) = inp_f in 
+  List.flatten (List.map (fun  (pi, f) ->
+    match f with 
+    | Normal _ -> []
+    | Eff (name, v, cons) -> if String.compare name inp_name ==0 && compareV v inp_v then cons else []
+  ) spec)
+
+(* Entailent *)
+let rec trs (lhs:spec) (rhs:spec) : bool = 
+  if nullable lhs && (not (nullable rhs)) then false 
+  else let f_Set = fst lhs in 
+  List.fold_left (fun acc f -> acc && 
+    (let der_lhs = derivitive lhs f in 
+     let der_rhs = derivitive rhs f in   
+     trs der_lhs der_rhs
+    )
+  ) true  f_Set
+
 (*** Tests ***)
 
 let startState = (TRUE,  Normal Unit)
