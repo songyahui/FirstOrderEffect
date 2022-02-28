@@ -424,7 +424,7 @@ let testExpr2:expr =
 
 let handleTestExpr1:expr = Match (testExpr1, ("x", Value (Const 1000), [("A", "x", resumeUnit)]))
 
-let ifElse = IfElse (Variable "x", performAunit, const3)
+let ifElse = IfElse (Variable "x", seqE1E2 performAunit const50, const3)
 let ifElseElse = IfElse (Variable "x", performAunit, IfElse (Variable "y", performBunit, const3))
 
 let handler1:expr = Match (ifElse, ("x", Value (Const 100), [("A", "x", resumeUnit )]))
@@ -457,22 +457,31 @@ let test_expression (exprLi:expr list) =
   ) 1 exprLi 
 
 
-let ifelseP = ("f", ["x"],  ifElse ,  [(TRUE, Normal (Unit))] ,  [(TRUE, Normal (Const 3));(TRUE, Eff ("A", Unit, [(TRUE, Normal Unit)]))])
-let handlerP:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", resumeUnit )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Unit))])
-let handlerP1:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", Value (Unit) )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Unit))])
+let ifelseP = ("f", ["x"],  ifElse ,  [(TRUE, Normal (Unit))] ,  [(TRUE, Normal (Const 3));(TRUE, Eff ("A", Unit, [(TRUE, Normal (Const 50))]))])
+let handlerP:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", resumeUnit )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Const 100))])
+let handlerP1:meth = ("handle", [], Match (FunCall ("f", [ "1"]), ("x", Value (Const 100), [("A", "x", Value (Unit) )])), [(TRUE, Normal (Unit))], [(TRUE, Normal (Const 100)); (TRUE, Normal (Unit))])
 
+
+let string_of_meth (name, arL, expr, pre, post) : string =
+  let rec helper li =
+    match li with
+    | [] -> ""
+    | [x] -> x 
+    | x :: xs ->  x ^ ", " ^ helper xs
+  in name ^ " (" ^ helper arL ^ ") =\nPre: "^ string_of_spec pre ^ "\nPost: " ^string_of_spec post ^ "\n\n" ^string_of_expr expr ^ "\n"
 
 let test_program (exprLi:program) =
   List.fold_left (fun acc (p_name, argL, expr, pre, post) -> 
     print_string("\n=====" ^ "TEST PRGM" ^ string_of_int acc ^"=========\n\n");
-    print_string (string_of_expr expr); 
+    print_string (string_of_meth ((p_name, argL, expr, pre, post))); 
     let eff = forward_shell exprLi None pre expr in 
-    print_string("\n--------------\nFinal = \n" ^string_of_spec eff ^"\n\n");
+    print_string("--------------\n");
+    (*print_string("\n--------------\nFinal = \n" ^string_of_spec eff ^"\n\n"); *)
     let (result, tree) =  entailment eff post in 
     let print_Tree = printTree ~line_prefix:"* " ~get_name ~get_children tree in 
     
-    let () = (if result then print_string ("post conditions hold\n" ^ print_Tree)
-    else print_string ("post conditions fail\n"^ print_Tree) ) in 
+    let () = (if result then print_string ("[VERIFICATION SUCCEED]\n" ^ print_Tree)
+    else print_string ("[VERIFICATION FAILED]\n"^ print_Tree ^ "\n") ) in 
     acc + 1
   ) 1 exprLi 
 
