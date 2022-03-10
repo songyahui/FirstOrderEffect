@@ -411,6 +411,7 @@ let performBunit = (Perform ("B", Unit))
 let const3 = Value (Const 3)
 let const5 = Value (Const 5)
 let const50 = Value (Const 50)
+let const300 = Value (Const 300)
 
 let folowedByUnit = Let ("_", performAunit, Value (Const 1))
 let seqE1E2 e1 e2 = Let ("_", e1, e2)
@@ -424,7 +425,7 @@ let testExpr2:expr =
 
 let handleTestExpr1:expr = Match (testExpr1, ("x", Value (Const 1000), [("A", "x", resumeUnit)]))
 
-let ifElse = IfElse (Variable "x", seqE1E2 performAunit const50, const3)
+let ifElse = IfElse (Variable "x", seqE1E2 performAunit const50, const300)
 let ifElseElse = IfElse (Variable "x", performAunit, IfElse (Variable "y", performBunit, const3))
 
 let handler1:expr = Match (ifElse, ("x", Value (Const 100), [("A", "x", resumeUnit )]))
@@ -486,8 +487,8 @@ let test_program (exprLi:program) =
   ) 1 exprLi 
 
 
-let main = test_program [ifelseP; handlerP; handlerP1]
- (*
+let main = test_program [ifelseP; handlerP; handlerP1]; 
+
  test_expression 
   [handleTestExpr1;
   ifElse;
@@ -502,6 +503,6 @@ let main = test_program [ifelseP; handlerP; handlerP1]
   handlerseqARest;
   handlerseqABRest;
   handlerseqBARest]
-  *)
+  
 
 
