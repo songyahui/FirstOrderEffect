@@ -1,7 +1,10 @@
 effect Found : (int * int list) -> int list  
 
 
-let rec take lst n = 
+let rec take lst n 
+  (*@ requires true, emp @*)
+  (*@ ensures  true, emp \/ Found @*)
+= 
   match lst with
   | [] -> []
   | first :: rest ->
@@ -9,7 +12,10 @@ let rec take lst n =
     perform (Found (first, rest))
   else first :: (take rest (n - 1))
   
-let handler lst n =
+let handler lst n 
+  (*@ requires true, emp @*)
+  (*@ ensures  true, emp \/ Found @*)
+=
   match take lst n with
   | li -> li 
   | effect (Found (first,  rest)) k -> first :: continue k rest
