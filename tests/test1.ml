@@ -1,12 +1,60 @@
-effect Foo : (unit)
+effect Foo : (int)
 
-let print_and_perform_Foo () = 
-    print_string ("Foo\n"); perform Foo
 
-let f () = 
-    print_and_perform_Foo ()
+(* Example 1 *)
+let f1 () = 
+    (perform Foo) + 1 
 
-let handle = 
-    match f () with 
-    | _ -> print_string ("Done\n\n")
-    | effect Foo k -> continue k ()
+let handle1 () = 
+    (match f1 () with 
+    | v -> v
+    | effect Foo k -> continue k 2
+    )
+
+let main1 = print_string (string_of_int (handle1 ()) ^ "\n")
+
+(*
+(display  
+        (+ 1 (call/cc
+        (lambda (k)
+          (k 2)))))
+*)
+
+(* Example 2 *)
+let f2 () = 
+    (perform Foo) + 1 
+
+let handle2 () = 
+    5 + 
+    (match f2 () with 
+    | v -> v
+    | effect Foo k -> continue k 2
+    )
+
+let main2 = print_string (string_of_int (handle2 ()) ^ "\n")
+
+(*
+(display (+ 5 
+        (+ 1 (call/cc
+        (lambda (k)
+          (k 2))))))
+*)
+
+(* Example 3 Abanden the continueation *)
+let f3 () = 
+    (perform Foo) + 1 
+
+let handle3 () = 
+    (match f3 () with 
+    | v -> v
+    | effect Foo k -> 10
+    )
+
+let main3 = print_string (string_of_int (handle3 ()) ^ "\n")
+
+(*
+(display (call/cc
+        (lambda (k)
+          (10))))))
+*)
+

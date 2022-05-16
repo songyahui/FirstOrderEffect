@@ -14,6 +14,8 @@ let code ()
   f();
   x := !x + 1;
   (*assert (!x = 1) *)
+  print_string (string_of_int (!x)^"\n");
+  Printf.printf "%d\n" ((Obj.magic x) )
 
 let handler 
   (*@ requires true, emp @*)
@@ -21,4 +23,4 @@ let handler
 = 
   match code () with 
   | _ -> ()
-  | effect Foo k ->   (continue (Obj.clone_continuation k) ()); continue k ()
+  | effect Foo k ->   (continue  k ()); continue k ()
