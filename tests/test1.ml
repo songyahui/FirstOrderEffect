@@ -53,8 +53,8 @@ let handle3 () =
 let main3 = print_string (string_of_int (handle3 ()) ^ "\n")
 
 (*
-(display (call/cc
+(display  
+        reset (+ 1 (shift (fun k -> 10 )
         (lambda (k)
-          (10))))))
+          10))))
 *)
-
